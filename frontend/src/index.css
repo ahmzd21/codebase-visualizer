@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    @apply bg-background text-on-surface font-body-base;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-surface-container-lowest;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-variant rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-outline;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-surface/80 backdrop-blur-xl border border-white/[0.08];
+  }
+  .card {
+    @apply bg-surface-container border border-white/[0.08] rounded-xl;
+  }
+  .card-low {
+    @apply bg-surface-container-low border border-white/[0.08] rounded-xl;
+  }
+  .btn-primary {
+    @apply bg-primary-container text-white font-medium py-[10px] px-md rounded-lg
+           hover:bg-primary-container/90 transition-all shadow-sm
+           focus:outline-none focus:ring-2 focus:ring-primary-container focus:ring-offset-2 focus:ring-offset-background
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply border border-white/[0.08] rounded-lg bg-surface/50 hover:bg-surface-variant
+           transition-colors text-on-surface text-body-sm font-body-sm py-sm px-md;
+  }
+  .input-field {
+    @apply w-full bg-background border border-white/[0.08] rounded-lg px-sm py-sm
+           text-on-surface text-body-base font-body-base
+           focus:outline-none focus:border-primary-container focus:ring-2 focus:ring-primary-container/20
+           transition-all placeholder:text-outline-variant;
+  }
+  .tab-active {
+    @apply bg-surface-variant text-on-surface shadow-sm border border-white/[0.08];
+  }
+  .tab-inactive {
+    @apply text-on-surface-variant hover:text-on-surface transition-colors;
+  }
+}
+
+/* Material Symbols filled variant */
+.material-symbols-outlined.filled {
+  font-variation-settings: 'FILL' 1;
+}
+
+/* Skeleton shimmer animation */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #1d2027 25%, #272a31 50%, #1d2027 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+
+/* Graph node tooltip */
+.graph-tooltip {
+  position: absolute;
+  pointer-events: none;
+  padding: 8px 12px;
+  background: #1d2027;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #e1e2ec;
+  white-space: nowrap;
+  z-index: 50;
+}
+
+/* Toast slide-in */
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);   opacity: 1; }
+}
+.toast-enter {
+  animation: slideIn 0.25s ease-out;
+}

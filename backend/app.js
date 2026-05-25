@@ -10,6 +10,8 @@ const jobRoutes = require("./modules/job/job.routes");
 const graphRoutes = require("./modules/graph/graph.routes");
 const fileRoutes = require("./modules/file/file.routes");
 const metricsRoutes = require("./modules/metrics/metrics.routes");
+const aiRoutes = require("./modules/ai/ai.routes");
+const usersRoutes = require("./modules/users/users.routes");
 
 const globalErrorHandler = require("./middleware/error.middleware");
 const { protect } = require("./middleware/auth.middleware");
@@ -20,8 +22,14 @@ const app = express();
 
 // ─── Global Middleware ────────────────────────────────────────────────────────
 
-// CORS
-app.use(cors());
+// CORS — allow React (3000) and Vite (5173) dev servers
+app.use(
+  cors({
+    origin: ["http://localhost:3000", "http://localhost:5173"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 // HTTP request logger (skip in test env)
 if (process.env.NODE_ENV !== "test") {
@@ -70,6 +78,9 @@ app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/repos", repoRoutes);
 app.use("/api/jobs", jobRoutes);
 
+// User profile routes (token required)
+app.use("/api/users", protect, usersRoutes);
+
 // Nested routes under /api/repos/:repoId — ownership is verified once here
 // and then passed down to all sub-routers via req.repo
 app.use(
@@ -90,6 +101,17 @@ app.use(
   checkRepoOwnership,
   metricsRoutes
 );
+// Hotspots route (reuses metrics controller)
+const { getRepoHotspots } = require("./modules/metrics/metrics.controller");
+app.get(
+  "/api/repos/:repoId/hotspots",
+  protect,
+  checkRepoOwnership,
+  getRepoHotspots
+);
+
+// AI routes (standalone — auth is handled inside the router)
+app.use("/api/ai", aiRoutes);
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
 
