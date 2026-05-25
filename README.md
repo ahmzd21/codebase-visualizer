@@ -47,7 +47,6 @@ JWT_EXPIRES_IN=7d
 NODE_ENV=development
 GITHUB_TOKEN=your_github_token_here
 GEMINI_API_KEY=your_gemini_key_here
-
 ```
 
 ### 4. Start the development server
