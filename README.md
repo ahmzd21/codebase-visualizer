@@ -1,16 +1,4 @@
-# Codebase Visualizer — REST API
-
-**Course:** Advanced Web Technologies
-**Project:** Codebase Visualizer — Developer Insight Tool
-
----
-
-## Group Information
-
-| Member | Role |
-|--------|------|
-| Member 1 | Auth Module, Repository Module, Job Module, Middleware |
-| Member 2 | File Module, Graph Module, Metrics Module, Error Handling |
+# Codebase Visualizer — Developer Insight Tool
 
 ---
 
@@ -29,62 +17,6 @@ A REST API backend that allows developers to submit a GitHub repository URL and 
 - **Validation:** express-validator
 - **Security:** express-mongo-sanitize, express-rate-limit
 - **Logging:** morgan
-
----
-
-## Project Structure
-
-```
-codebase-visualizer/
-├── server.js                        # Entry point
-├── .env.example                     # Environment variable template
-├── src/
-│   ├── app.js                       # Express app setup, middleware, routes
-│   ├── config/
-│   │   └── db.js                    # MongoDB connection
-│   ├── models/
-│   │   ├── User.js
-│   │   ├── Repository.js
-│   │   ├── Job.js
-│   │   ├── File.js
-│   │   └── Graph.js
-│   ├── middleware/
-│   │   ├── auth.middleware.js       # JWT verification → req.user
-│   │   ├── ownership.middleware.js  # Repo ownership check → req.repo
-│   │   ├── validate.middleware.js   # express-validator error reader
-│   │   ├── asyncHandler.js         # Wraps async controllers
-│   │   └── error.middleware.js     # Global error handler
-│   ├── utils/
-│   │   ├── AppError.js             # Custom operational error class
-│   │   └── response.js             # Standardized sendSuccess / sendError
-│   └── modules/
-│       ├── auth/
-│       │   ├── auth.routes.js
-│       │   ├── auth.controller.js
-│       │   ├── auth.service.js
-│       │   └── auth.validation.js
-│       ├── repository/
-│       │   ├── repository.routes.js
-│       │   ├── repository.controller.js
-│       │   ├── repository.service.js
-│       │   └── repository.validation.js
-│       ├── job/
-│       │   ├── job.routes.js
-│       │   ├── job.controller.js
-│       │   └── job.service.js
-│       ├── file/
-│       │   ├── file.routes.js
-│       │   ├── file.controller.js
-│       │   └── file.service.js
-│       ├── graph/
-│       │   ├── graph.routes.js
-│       │   ├── graph.controller.js
-│       │   └── graph.service.js
-│       └── metrics/
-│           ├── metrics.routes.js
-│           ├── metrics.controller.js
-│           └── metrics.service.js
-```
 
 ---
 
@@ -113,18 +45,25 @@ MONGO_URI=mongodb://localhost:27017/codebase-visualizer
 JWT_SECRET=your_super_secret_jwt_key_change_this_in_production
 JWT_EXPIRES_IN=7d
 NODE_ENV=development
+GITHUB_TOKEN=your_github_token_here
+GEMINI_API_KEY=your_gemini_key_here
+
 ```
 
-### 4. Start the server
+### 4. Start the development server
 ```bash
-# Development (with auto-restart)
+# Start both frontend and backend
 npm run dev
 
-# Production
-npm start
+# Backend only
+npm run dev:backend
+
+# Frontend only
+npm run dev:frontend
 ```
 
-Server runs at: `http://localhost:5000`
+- Frontend runs at: `http://localhost:5173`
+- Backend runs at: `http://localhost:5000`
 
 ---
 
