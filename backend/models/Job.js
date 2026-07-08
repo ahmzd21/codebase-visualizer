@@ -22,6 +22,10 @@ const jobSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    bullJobId: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true }
 );

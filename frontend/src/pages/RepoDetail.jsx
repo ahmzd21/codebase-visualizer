@@ -8,6 +8,7 @@ import FilesView from './FilesView'
 import MetricsView from './MetricsView'
 import HotspotsView from './HotspotsView'
 import AIInsightsView from './AIInsightsView'
+import FloatingChat from '../components/FloatingChat'
 
 const TABS = [
   { id: 'graph',     label: 'Graph',     icon: 'account_tree' },
@@ -115,6 +116,8 @@ export default function RepoDetail() {
           </>
         )}
       </main>
+      
+      {repo.status === 'completed' && <FloatingChat repoId={repoId} />}
     </div>
   )
 }

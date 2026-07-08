@@ -4,6 +4,13 @@ const File = require("../../models/File");
 const Graph = require("../../models/Graph");
 const AppError = require("../../utils/AppError");
 
+// Lazy-loaded to avoid circular dependency at module init time
+const getAnalysisQueue = () => require("../../queue/analysisQueue").analysisQueue;
+// Lazy-loaded for the same reason — io is set after server boots
+const getIO = () => require("../../socket/socketManager").getIO();
+
+const { parseImports, calculateComplexity } = require("../parser");
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 // Extract owner and repo name from a GitHub URL
@@ -157,46 +164,7 @@ const shouldSkipFile = (path) => {
   return false;
 };
 
-// Parse import/require statements from source text
-const parseImports = (content, language) => {
-  const imports = [];
-  if (language === "JavaScript" || language === "TypeScript") {
-    // ES module imports: import X from './path'  |  import './path'
-    const esImports = content.matchAll(/import\s+(?:[^'"]+\s+from\s+)?['"]([^'"]+)['"]/g);
-    for (const m of esImports) imports.push(m[1]);
-    // CommonJS: require('./path')
-    const cjsImports = content.matchAll(/require\s*\(\s*['"]([^'"]+)['"]\s*\)/g);
-    for (const m of cjsImports) imports.push(m[1]);
-  } else if (language === "Python") {
-    // import module  |  from module import something
-    const pyImports = content.matchAll(/^(?:import|from)\s+([\w.]+)/gm);
-    for (const m of pyImports) imports.push(m[1]);
-  }
-  // Deduplicate
-  return [...new Set(imports)];
-};
-
-// Approximate cyclomatic complexity by counting decision points
-const calculateComplexity = (content) => {
-  let complexity = 1; // base complexity
-  const patterns = [
-    /\bif\b/g,
-    /\belse\s+if\b/g,
-    /\bfor\b/g,
-    /\bwhile\b/g,
-    /\bswitch\b/g,
-    /\bcase\b/g,
-    /\bcatch\b/g,
-    /&&/g,
-    /\|\|/g,
-    /\?[^:]/g, // ternary operator
-  ];
-  for (const pattern of patterns) {
-    const matches = content.match(pattern);
-    if (matches) complexity += matches.length;
-  }
-  return complexity;
-};
+// Removed inline parseImports and calculateComplexity; using AST parsers from ../parser
 
 // Resolve a relative import path to a likely file path
 const resolveImport = (fromPath, importPath, allFilePaths) => {
@@ -228,8 +196,21 @@ const resolveImport = (fromPath, importPath, allFilePaths) => {
 // ─── Core Analysis Pipeline ───────────────────────────────────────────────────
 
 const runRealAnalysis = async (repoId, owner, repo) => {
-  const updateJob = (progress, status = "running") =>
-    Job.findOneAndUpdate({ repoId }, { status, progress });
+  const jobDoc = await Job.findOne({ repoId });
+  const jobId = jobDoc?._id?.toString();
+
+  const emitProgress = (progress, status = "running") => {
+    const io = getIO();
+    if (io && jobId) {
+      io.to(`job:${jobId}`).emit("job:progress", { jobId, progress, status });
+    }
+  };
+
+  const updateJob = async (progress, status = "running") => {
+    await Job.findOneAndUpdate({ repoId }, { status, progress });
+    emitProgress(progress, status);
+  };
+
   const updateRepo = (status) =>
     Repository.findByIdAndUpdate(repoId, { status });
 
@@ -243,13 +224,17 @@ const runRealAnalysis = async (repoId, owner, repo) => {
     });
 
     if (repoRes.status === 404) {
-      throw new AppError("Repository not found or is private.", 422, "REPO_NOT_ACCESSIBLE");
+      throw new AppError("Repository not found or is private. Check your GITHUB_TOKEN or the repository URL.", 422, "REPO_NOT_ACCESSIBLE");
     }
     if (repoRes.status === 403 || repoRes.status === 429) {
-      throw new AppError("GitHub API rate limit exceeded. Try again later.", 429, "GITHUB_RATE_LIMIT");
+      throw new AppError("GitHub API rate limit exceeded or access forbidden. Try again later.", 429, "GITHUB_RATE_LIMIT");
+    }
+    if (repoRes.status === 401) {
+      throw new AppError("GitHub API unauthorized. Check your GITHUB_TOKEN in the backend .env file.", 401, "GITHUB_UNAUTHORIZED");
     }
     if (!repoRes.ok) {
-      throw new AppError("Failed to fetch repository from GitHub.", 502, "GITHUB_API_ERROR");
+      const errorText = await repoRes.text().catch(() => "Unknown error text");
+      throw new AppError(`Failed to fetch repository from GitHub (Status: ${repoRes.status}). Details: ${errorText}`, 502, "GITHUB_API_ERROR");
     }
 
     const repoData = await repoRes.json();
@@ -306,10 +291,10 @@ const runRealAnalysis = async (repoId, owner, repo) => {
             const rawContent = Buffer.from(contentData.content || "", "base64").toString("utf-8");
             const language = detectLanguage(item.path);
             const imports = parseImports(rawContent, language);
-            const complexity = calculateComplexity(rawContent);
+            const complexity = calculateComplexity(rawContent, language);
             const size = item.size || rawContent.length;
 
-            return { path: item.path, language, imports, complexity, size };
+            return { path: item.path, language, imports, complexity, size, content: rawContent };
           } catch {
             return null;
           }
@@ -363,25 +348,50 @@ const runRealAnalysis = async (repoId, owner, repo) => {
     // ── Step 6: Mark complete ─────────────────────────────────────────────────
     await updateJob(100, "done");
     await Repository.findByIdAndUpdate(repoId, { status: "completed", completedAt: new Date() });
+    // Emit final completion event so client can redirect/refresh
+    const io = getIO();
+    if (io && jobId) io.to(`job:${jobId}`).emit("job:done", { jobId });
   } catch (err) {
     await Job.findOneAndUpdate(
       { repoId },
       { status: "failed", error: err.message, progress: 0 }
     );
     await Repository.findByIdAndUpdate(repoId, { status: "failed" });
+    // Emit failure so client stops waiting
+    const io = getIO();
+    if (io && jobId) io.to(`job:${jobId}`).emit("job:failed", { jobId, error: err.message });
     // Re-throw so the caller's .catch() can log it
     throw err;
   }
 };
 
-// ─── Public Service Functions ─────────────────────────────────────────────────
+const AIInsight = require("../../models/AIInsight");
+const Chat = require("../../models/Chat");
 
-const analyzeRepo = async (userId, repoUrl) => {
+const deleteRepo = async (repoId, userId) => {
+  const repo = await Repository.findOne({ _id: repoId, userId });
+  if (!repo) throw new AppError("Repository not found.", 404, "REPO_NOT_FOUND");
+  
+  await Job.deleteMany({ repoId });
+  await File.deleteMany({ repoId });
+  await Graph.deleteMany({ repoId });
+  await AIInsight.deleteMany({ repoId });
+  await Chat.deleteMany({ repoId });
+  await Repository.deleteOne({ _id: repoId });
+  
+  return true;
+};
+
+const analyzeRepo = async (userId, repoUrl, force = false) => {
   // Check if user already submitted this URL — return cached result
   const existing = await Repository.findOne({ userId, repoUrl });
-  if (existing) {
+  if (existing && !force) {
     const job = await Job.findOne({ repoId: existing._id });
     return { repo: existing, job, cached: true };
+  }
+  
+  if (existing && force) {
+    await deleteRepo(existing._id, userId);
   }
 
   const { owner, repo } = parseGitHubUrl(repoUrl);
@@ -390,10 +400,16 @@ const analyzeRepo = async (userId, repoUrl) => {
   const newRepo = await Repository.create({ userId, repoUrl, repoName, status: "pending" });
   const job = await Job.create({ repoId: newRepo._id, status: "queued", progress: 0 });
 
-  // Kick off real analysis in the background (non-blocking)
-  runRealAnalysis(newRepo._id, owner, repo).catch((err) => {
-    console.error(`[Analysis Error] ${err.message}`);
-  });
+  // Enqueue the analysis job — BullMQ worker will pick it up
+  const queue = getAnalysisQueue();
+  const bullJob = await queue.add(
+    "analyze-repo",
+    { repoId: newRepo._id.toString(), owner, repo },
+    { jobId: job._id.toString() } // use our MongoDB ID as BullMQ job ID for traceability
+  );
+
+  // Persist BullMQ job ID back onto our Job document
+  await Job.findByIdAndUpdate(job._id, { bullJobId: bullJob.id });
 
   return { repo: newRepo, job, cached: false };
 };
@@ -408,4 +424,4 @@ const getRepoById = async (repoId) => {
   return repo;
 };
 
-module.exports = { analyzeRepo, getUserRepos, getRepoById };
+module.exports = { analyzeRepo, getUserRepos, getRepoById, deleteRepo, runRealAnalysis };

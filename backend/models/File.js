@@ -16,6 +16,10 @@ const fileSchema = new mongoose.Schema(
       type: String,
       default: "Unknown",
     },
+    content: {
+      type: String,
+      default: "",
+    },
     imports: {
       type: [String],
       default: [],

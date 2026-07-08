@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { useSocket } from '../hooks/useSocket'
 import Spinner from '../components/Spinner'
 import ProgressBar from '../components/ProgressBar'
 import Modal from '../components/Modal'
@@ -14,26 +15,47 @@ const STATUS_COLORS = {
   failed: 'bg-error-container/20 text-error border-error/30',
 }
 
-function RepoCard({ repo, onClick }) {
+function RepoCard({ repo, onClick, onReanalyze, onDelete }) {
   const date = new Date(repo.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   return (
-    <button onClick={onClick}
-      className="card p-md text-left hover:bg-surface-container-high transition-all group w-full flex flex-col gap-sm">
-      <div className="flex items-start justify-between gap-sm">
-        <div className="flex items-center gap-sm min-w-0">
-          <span className="material-symbols-outlined text-primary-container text-[20px] flex-shrink-0">folder_code</span>
-          <span className="font-body-base text-body-base font-semibold text-on-surface truncate">
-            {repo.repoName || repo.repoUrl.split('/').pop()}
+    <div className="card p-md text-left hover:bg-surface-container-high transition-all group w-full flex flex-col gap-sm relative">
+      <button onClick={onClick} className="flex flex-col gap-sm w-full text-left">
+        <div className="flex items-start justify-between gap-sm">
+          <div className="flex items-center gap-sm min-w-0">
+            <span className="material-symbols-outlined text-primary-container text-[20px] flex-shrink-0">folder_code</span>
+            <span className="font-body-base text-body-base font-semibold text-on-surface truncate">
+              {repo.repoName || repo.repoUrl.split('/').pop()}
+            </span>
+          </div>
+          <span className={`flex-shrink-0 text-label-caps font-label-caps px-sm py-xs rounded-full border ${STATUS_COLORS[repo.status] || STATUS_COLORS.pending}`}>
+            {repo.status}
           </span>
         </div>
-        <span className={`flex-shrink-0 text-label-caps font-label-caps px-sm py-xs rounded-full border ${STATUS_COLORS[repo.status] || STATUS_COLORS.pending}`}>
-          {repo.status}
-        </span>
+        <p className="text-body-sm font-body-sm text-on-surface-variant truncate">{repo.repoUrl}</p>
+        <p className="text-label-caps font-label-caps text-on-surface-variant">{date}</p>
+      </button>
+      <div className="flex items-center justify-between mt-xs">
+        <span className="material-symbols-outlined text-outline text-[16px] group-hover:text-primary transition-colors">arrow_forward</span>
+        <div className="flex items-center gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => { e.stopPropagation(); onReanalyze(repo); }}
+            className="flex items-center gap-xs text-on-surface-variant hover:text-primary-container hover:bg-primary-container/10 rounded-lg px-sm py-xs text-body-sm transition-colors"
+            title="Re-analyze"
+          >
+            <span className="material-symbols-outlined text-[16px]">refresh</span>
+            Re-analyze
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(repo); }}
+            className="flex items-center gap-xs text-on-surface-variant hover:text-error hover:bg-error-container/20 rounded-lg px-sm py-xs text-body-sm transition-colors"
+            title="Delete"
+          >
+            <span className="material-symbols-outlined text-[16px]">delete</span>
+            Delete
+          </button>
+        </div>
       </div>
-      <p className="text-body-sm font-body-sm text-on-surface-variant truncate">{repo.repoUrl}</p>
-      <p className="text-label-caps font-label-caps text-on-surface-variant">{date}</p>
-      <span className="material-symbols-outlined text-outline text-[16px] self-end group-hover:text-primary transition-colors">arrow_forward</span>
-    </button>
+    </div>
   )
 }
 
@@ -63,20 +85,50 @@ export default function Dashboard() {
   // Cleanup polling on unmount
   useEffect(() => () => clearInterval(pollingRef.current), [])
 
+  // ─── Socket.IO real-time progress ─────────────────────────────────────────────
+  // Join the active job's room and receive push events from the worker.
+  // Falls back to REST polling if socket is unavailable.
+  useSocket(activeJob?.jobId ?? null, {
+    onProgress: ({ progress, status }) => {
+      setActiveJob(prev => prev ? { ...prev, progress, status } : prev)
+    },
+    onDone: async () => {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+      setActiveJob(null)
+      await fetchRepos()
+    },
+    onFailed: async ({ error }) => {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+      setActiveJob(null)
+      setError(error || 'Analysis failed.')
+      await fetchRepos()
+    },
+  })
+
+  // ─── REST polling fallback ─────────────────────────────────────────────────
+  // Only kicks in if the socket doesn't emit events (e.g. Redis/Socket.IO down)
   const startPolling = (jobId, repoName) => {
     setActiveJob({ jobId, progress: 0, status: 'queued', repoName })
-    pollingRef.current = setInterval(async () => {
-      const res = await api.get(`/jobs/${jobId}`)
-      if (!res.ok) return
-      const { job } = res
-      setActiveJob(prev => ({ ...prev, progress: job.progress, status: job.status }))
-      if (job.status === 'done' || job.status === 'failed') {
-        clearInterval(pollingRef.current)
-        pollingRef.current = null
-        setActiveJob(null)
-        await fetchRepos()
+    // Give socket 3s to deliver events before enabling polling fallback
+    const fallbackTimeout = setTimeout(() => {
+      if (!pollingRef.current) {
+        pollingRef.current = setInterval(async () => {
+          const res = await api.get(`/jobs/${jobId}`)
+          if (!res.ok) return
+          const { job } = res
+          setActiveJob(prev => prev ? { ...prev, progress: job.progress, status: job.status } : prev)
+          if (job.status === 'done' || job.status === 'failed') {
+            clearInterval(pollingRef.current)
+            pollingRef.current = null
+            setActiveJob(null)
+            await fetchRepos()
+          }
+        }, 2000)
       }
-    }, 2000)
+    }, 3000)
+    return () => clearTimeout(fallbackTimeout)
   }
 
   const handleAnalyze = async (e) => {
@@ -103,6 +155,24 @@ export default function Dashboard() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleReanalyze = async (repo) => {
+    if (!window.confirm(`Re-analyze "${repo.repoName}"? Previous data will be overwritten.`)) return;
+    const res = await api.post('/repos/analyze', { repoUrl: repo.repoUrl, force: true });
+    if (res.ok) {
+      if (!res.cached) startPolling(res.jobId, res.repoName || repo.repoName);
+      else await fetchRepos();
+    } else {
+      setError(res.error?.message || 'Failed to re-analyze.');
+    }
+  }
+
+  const handleDelete = async (repo) => {
+    if (!window.confirm(`Delete analysis for "${repo.repoName}"? This cannot be undone.`)) return;
+    const res = await api.delete(`/repos/${repo._id}`);
+    if (res.ok) await fetchRepos();
+    else setError(res.error?.message || 'Failed to delete.');
   }
 
   const logout = () => {
@@ -184,7 +254,13 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-md">
             {repos.map(repo => (
-              <RepoCard key={repo._id} repo={repo} onClick={() => navigate(`/repos/${repo._id}`)} />
+              <RepoCard
+                key={repo._id}
+                repo={repo}
+                onClick={() => navigate(`/repos/${repo._id}`)}
+                onReanalyze={handleReanalyze}
+                onDelete={handleDelete}
+              />
             ))}
           </div>
         )}

@@ -17,6 +17,7 @@ const globalErrorHandler = require("./middleware/error.middleware");
 const { protect } = require("./middleware/auth.middleware");
 const { checkRepoOwnership } = require("./middleware/ownership.middleware");
 const AppError = require("./utils/AppError");
+const { serverAdapter, bullBoardAuth } = require("./queue/bullBoard");
 
 const app = express();
 
@@ -112,6 +113,11 @@ app.get(
 
 // AI routes (standalone — auth is handled inside the router)
 app.use("/api/ai", aiRoutes);
+
+// ─── Bull Board Admin UI ─────────────────────────────────────────────────────
+// Access at http://localhost:5000/admin/queues
+// Protect with BULL_BOARD_PASSWORD env var in production
+app.use("/admin/queues", bullBoardAuth, serverAdapter.getRouter());
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
 
